@@ -14,7 +14,8 @@ import {
   StyleSheet,
   I18nManager,
   EasingFunction,
-  LayoutChangeEvent
+  LayoutChangeEvent,
+  EmitterSubscription
 } from 'react-native';
 import { Rect, Point, Size, getRectForRef, getArrowSize, getBorderRadius } from './Utility';
 import { computeGeometry, Geometry } from './Geometry';
@@ -27,10 +28,10 @@ const isWeb = Platform.OS === 'web';
 const DEBUG = false;
 
 /*
- * FIX_SHIFT resolves an issue with useNativeDriver, where it would flash the 
- * popover on and off really quickly, and then animate in normally. Now, because 
- * of the shift, the flash happens off screen, and then it is shifted on screen 
- * just before beginning the actual animation. 
+ * FIX_SHIFT resolves an issue with useNativeDriver, where it would flash the
+ * popover on and off really quickly, and then animate in normally. Now, because
+ * of the shift, the flash happens off screen, and then it is shifted on screen
+ * just before beginning the actual animation.
  */
 const FIX_SHIFT = isWeb
   ? 0
@@ -355,6 +356,8 @@ interface AdaptivePopoverState {
   shiftedDisplayArea: Rect | null;
   defaultDisplayArea: Rect | null;
   displayAreaOffset: Point | null;
+  keyboardDidShowSubscription: EmitterSubscription | null;
+  keyboardDidHideSubscription: EmitterSubscription | null;
 }
 
 interface AdaptivePopoverProps extends PopoverProps {
@@ -370,7 +373,9 @@ class AdaptivePopover extends Component<AdaptivePopoverProps, AdaptivePopoverSta
     fromRect: null,
     shiftedDisplayArea: null,
     defaultDisplayArea: null,
-    displayAreaOffset: null
+    displayAreaOffset: null,
+    keyboardDidShowSubscription: null,
+    keyboardDidHideSubscription: null
   }
 
   getUnshiftedDisplayArea(): Rect {
@@ -422,8 +427,17 @@ class AdaptivePopover extends Component<AdaptivePopoverProps, AdaptivePopoverSta
   componentWillUnmount() {
     this._isMounted = false;
     Dimensions.removeEventListener('change', this.handleResizeEvent);
-    Keyboard.removeListener('keyboardDidShow', this.keyboardDidShow);
-    Keyboard.removeListener('keyboardDidHide', this.keyboardDidHide);
+    const { keyboardDidShowSubscription, keyboardDidHideSubscription } = this.state;
+    if (keyboardDidShowSubscription !== null) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      (keyboardDidShowSubscription! as EmitterSubscription).remove();
+      this.setState({ keyboardDidShowSubscription: null });
+    }
+    if (keyboardDidHideSubscription !== null) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      (keyboardDidHideSubscription! as EmitterSubscription).remove();
+      this.setState({ keyboardDidHideSubscription: null });
+    }
   }
 
   componentDidUpdate(prevProps: AdaptivePopoverProps) {
@@ -583,7 +597,7 @@ class AdaptivePopover extends Component<AdaptivePopoverProps, AdaptivePopoverSta
 
   render() {
     const { onOpenStart, onCloseStart, fromRef, ...otherProps } = this.props;
-    const { fromRect } = this.state;
+    const { fromRect, keyboardDidShowSubscription, keyboardDidHideSubscription } = this.state;
 
     // Don't render popover until we have an initial fromRect calculated for the view
     if (fromRef && !fromRect) return null;
@@ -596,15 +610,24 @@ class AdaptivePopover extends Component<AdaptivePopoverProps, AdaptivePopoverSta
         onOpenStart={() => {
           if (onOpenStart) onOpenStart();
           this.debug('Setting up keyboard listeners');
-          Keyboard.addListener('keyboardDidShow', this.keyboardDidShow);
-          Keyboard.addListener('keyboardDidHide', this.keyboardDidHide);
+          this.setState({ keyboardDidShowSubscription: Keyboard.addListener('keyboardDidShow', this.keyboardDidShow) });
+          this.setState({ keyboardDidHideSubscription: Keyboard.addListener('keyboardDidHide', this.keyboardDidHide) });
           this.displayAreaStore = this.getDisplayArea();
         }}
         onCloseStart={() => {
           if (onCloseStart) onCloseStart();
           this.debug('Tearing down keyboard listeners');
-          Keyboard.removeListener('keyboardDidShow', this.keyboardDidShow);
-          Keyboard.removeListener('keyboardDidHide', this.keyboardDidHide);
+          if (keyboardDidShowSubscription !== null) {
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            (keyboardDidShowSubscription! as EmitterSubscription).remove();
+            this.setState({ keyboardDidShowSubscription: null });
+          }
+          // Typescript is struggling to identify `keyboardDidHideSubscription` can't be null
+          if (keyboardDidHideSubscription !== null) {
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            (keyboardDidHideSubscription! as EmitterSubscription).remove();
+            this.setState({ keyboardDidHideSubscription: null });
+          }
           if (this._isMounted) this.setState({ shiftedDisplayArea: null });
         }}
         skipMeasureContent={() => this.waitForResizeToFinish}
